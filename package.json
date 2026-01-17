@@ -2,6 +2,8 @@
   "name": "multi-whatsapp",
   "private": true,
   "version": "0.0.0",
+  "description": "Desktop app to manage multiple WhatsApp sessions",
+  "author": "Edgar Angrino",
   "type": "module",
   "scripts": {
     "dev": "vite",
