@@ -1,30 +1,59 @@
-# React + TypeScript + Vite
+# Multi-WhatsApp
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+## Overview
 
-Currently, two official plugins are available:
+**Multi-WhatsApp** was created out of a real, practical need: managing **multiple WhatsApp sessions** at the same time.
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react/README.md) uses [Babel](https://babeljs.io/) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+For business purposes, having more than one phone number is common (sales, support, personal/business separation, etc.). However, WhatsApp Web and the official desktop apps are designed primarily around a single active session, which quickly becomes a limitation when you need to handle **two or more numbers simultaneously**.
 
-## Expanding the ESLint configuration
+This project solves that problem by allowing multiple independent WhatsApp Web sessions to run side by side inside a single desktop application.
 
-If you are developing a production application, we recommend updating the configuration to enable type aware lint rules:
+---
 
-- Configure the top-level `parserOptions` property like this:
+## Why This Project Exists
 
-```js
-export default {
-  // other rules...
-  parserOptions: {
-    ecmaVersion: 'latest',
-    sourceType: 'module',
-    project: ['./tsconfig.json', './tsconfig.node.json'],
-    tsconfigRootDir: __dirname,
-  },
-}
-```
+- Handle **more than two WhatsApp numbers** efficiently
+- Avoid constantly logging in and out of WhatsApp Web
+- Centralize business communication in one desktop app
+- Keep sessions isolated and persistent
 
-- Replace `plugin:@typescript-eslint/recommended` to `plugin:@typescript-eslint/recommended-type-checked` or `plugin:@typescript-eslint/strict-type-checked`
-- Optionally add `plugin:@typescript-eslint/stylistic-type-checked`
-- Install [eslint-plugin-react](https://github.com/jsx-eslint/eslint-plugin-react) and add `plugin:react/recommended` & `plugin:react/jsx-runtime` to the `extends` list
+The goal is productivity and simplicity, not reinventing WhatsApp.
+
+---
+
+## Current Features
+
+- Multiple WhatsApp Web sessions
+- Persistent sessions (each account keeps its login)
+- Fast switching between accounts
+- Cross-platform desktop app (Electron + Vite)
+
+---
+
+## Future Plans
+
+This project is intentionally kept flexible.
+
+Additional features **may be added in the future**, depending on real usage needs, such as:
+
+- Better session management
+- UI/UX improvements
+- Notifications and per-account controls
+- Other productivity-focused tools
+
+There is no fixed roadmap — features will be added only if they solve real problems.
+
+---
+
+## Disclaimer
+
+This project is **not affiliated with WhatsApp or Meta**.
+It simply embeds WhatsApp Web in isolated sessions for convenience.
+
+Use it responsibly and in accordance with WhatsApp's terms of service.
+
+---
+
+## Status
+
+This is an actively evolving project built to solve a real-world need. Expect changes, improvements, and refinements over time.
