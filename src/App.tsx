@@ -50,6 +50,15 @@ export default function App() {
     const updated = accounts.filter((acc) => acc !== id);
     setAccounts(updated);
     window.electronAPI.closeWhatsApp(id);
+
+    // Si se eliminó la sesión activa, cambiar a la última disponible
+    if (activeId === id && updated.length > 0) {
+      const lastId = updated[updated.length - 1];
+      setActiveId(lastId);
+      window.electronAPI.openWhatsApp(lastId);
+    } else if (updated.length === 0) {
+      setActiveId(null);
+    }
   };
 
   return (
@@ -66,23 +75,23 @@ export default function App() {
           className="drawer-overlay"></label>
         <div className="w-30 min-h-full bg-base-100 p-4 flex flex-col justify-between">
           <div>
-            <h2 className="text-xs uppercase tracking-widest mb-3 text-slate-400">
+            <h2 className="text-xs uppercase tracking-widest mb-4 text-slate-400 font-medium">
               Cuentas
             </h2>
             <div className="flex flex-col gap-2">
               {accounts.map((id) => (
                 <div
                   key={id}
-                  className={`rounded-xl shadow-md flex overflow-hidden border border-slate-600/20 transition-all duration-200 ${
+                  className={`shadow-sm flex overflow-hidden border-l-4 transition-all duration-200 ${
                     activeId === id
-                      ? "shadow-green-400/40"
-                      : "shadow-slate-900/20"
+                      ? "border-l-green-500 bg-green-950/30 shadow-green-400/20"
+                      : "border-l-slate-700 bg-slate-900/50 hover:bg-slate-800/50"
                   }`}>
                   <button
                     onClick={() => switchAccount(id)}
-                    className={`w-11 h-11 flex items-center justify-center text-slate-200 transition-colors duration-150 ${
+                    className={`flex-1 h-12 flex items-center justify-center text-slate-200 transition-colors duration-150 ${
                       activeId === id
-                        ? "bg-green-900"
+                        ? "bg-green-900/40"
                         : "bg-slate-900 hover:bg-slate-800"
                     }`}>
                     <div className="relative">
@@ -94,7 +103,7 @@ export default function App() {
                   </button>
                   <button
                     onClick={() => removeAccount(id)}
-                    className="w-11 h-11 flex items-center justify-center text-slate-200 bg-red-900 hover:bg-red-700 border-l border-slate-800"
+                    className="w-12 h-12 flex items-center justify-center text-slate-200 bg-red-900/60 hover:bg-red-900 border-l border-slate-700 transition-colors duration-150"
                     title="Eliminar">
                     <MdDelete className="w-4 h-4" />
                   </button>
@@ -104,7 +113,7 @@ export default function App() {
           </div>
           <button
             onClick={addAccount}
-            className="mt-3 text-sm font-semibold tracking-wide rounded-xl bg-gradient-to-r from-green-600 to-green-400 text-zinc-900 px-3 py-2 hover:brightness-110 transition">
+            className="mt-3 text-sm font-semibold tracking-wide bg-linear-to-r from-green-600 to-green-500 text-zinc-900 px-3 py-2.5 hover:from-green-500 hover:to-green-400 transition shadow-sm">
             + Añadir
           </button>
         </div>
