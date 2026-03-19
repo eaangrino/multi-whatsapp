@@ -28,4 +28,5 @@ contextBridge.exposeInMainWorld('electronAPI', {
   closeWhatsApp: (id: number) => ipcRenderer.invoke('close-WhatsApp', id),
   getSessions: (): Promise<number[]> => ipcRenderer.invoke('get-sessions'), // 👈 IMPORTANTE
   reorderSessions: (ids: number[]): Promise<number[]> => ipcRenderer.invoke('reorder-sessions', ids),
+  setDeleteModalOpen: (isOpen: boolean): Promise<void> => ipcRenderer.invoke('set-delete-modal-open', isOpen),
 });

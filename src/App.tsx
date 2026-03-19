@@ -27,9 +27,10 @@ declare global {
   interface Window {
     electronAPI: {
       openWhatsApp: (id: number) => void;
-      closeWhatsApp: (id: number) => void;
+      closeWhatsApp: (id: number) => Promise<void>;
       getSessions: () => Promise<number[]>;
       reorderSessions: (ids: number[]) => Promise<number[]>;
+      setDeleteModalOpen: (isOpen: boolean) => Promise<void>;
     };
   }
 }
@@ -38,6 +39,8 @@ export default function App() {
   const [accounts, setAccounts] = useState<number[]>([]);
   const [activeId, setActiveId] = useState<number | null>(null);
   const [draggedId, setDraggedId] = useState<number | null>(null);
+  const [pendingDeleteId, setPendingDeleteId] = useState<number | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   useEffect(() => {
     const loadFromMain = async () => {
@@ -56,6 +59,10 @@ export default function App() {
 
     loadFromMain();
   }, []);
+
+  useEffect(() => {
+    void window.electronAPI.setDeleteModalOpen(pendingDeleteId !== null);
+  }, [pendingDeleteId]);
 
   const switchAccount = (id: number) => {
     setActiveId(id);
@@ -76,20 +83,27 @@ export default function App() {
     void window.electronAPI.reorderSessions(nextAccounts);
   };
 
-  const removeAccount = (id: number) => {
-    const updated = accounts.filter((acc) => acc !== id);
-    setAccounts(updated);
-    window.electronAPI.closeWhatsApp(id);
+  const removeAccount = async (id: number) => {
+    setIsDeleting(true);
 
-    if (activeId !== id) {
-      return;
-    }
+    try {
+      const updated = accounts.filter((acc) => acc !== id);
+      setAccounts(updated);
+      await window.electronAPI.closeWhatsApp(id);
 
-    const nextActiveId = updated[0] ?? null;
-    setActiveId(nextActiveId);
+      if (activeId !== id) {
+        return;
+      }
 
-    if (nextActiveId !== null) {
-      window.electronAPI.openWhatsApp(nextActiveId);
+      const nextActiveId = updated[0] ?? null;
+      setActiveId(nextActiveId);
+
+      if (nextActiveId !== null) {
+        window.electronAPI.openWhatsApp(nextActiveId);
+      }
+    } finally {
+      setIsDeleting(false);
+      setPendingDeleteId(null);
     }
   };
 
@@ -162,7 +176,7 @@ export default function App() {
                     <span className="text-xs font-semibold">#{id}</span>
                   </button>
                   <button
-                    onClick={() => removeAccount(id)}
+                    onClick={() => setPendingDeleteId(id)}
                     className="btn btn-ghost btn-xs h-8 min-h-8 w-8 cursor-pointer rounded-lg border-0 px-0 text-base-content/35 hover:bg-error/12 hover:text-error"
                     title="Remove">
                     <MdDelete className="h-4 w-4" />
@@ -183,6 +197,43 @@ export default function App() {
       <main className="h-full min-w-0 flex-1 bg-base-200/20">
         <div id="pageContentHere" className="h-full w-full" />
       </main>
+
+      {pendingDeleteId !== null ? (
+        <dialog className="modal modal-open">
+          <div className="modal-box max-w-sm rounded-3xl border border-base-300/70 bg-base-100 shadow-xl">
+            <h3 className="text-lg font-semibold text-base-content">
+              Remove session?
+            </h3>
+            <p className="mt-3 text-sm leading-relaxed text-base-content/70">
+              This will remove account #{pendingDeleteId} from the app and clear
+              its stored WhatsApp session data on this device.
+            </p>
+            <div className="modal-action mt-6">
+              <button
+                onClick={() => setPendingDeleteId(null)}
+                className="btn btn-ghost rounded-2xl"
+                disabled={isDeleting}>
+                Cancel
+              </button>
+              <button
+                onClick={() => void removeAccount(pendingDeleteId)}
+                className="btn btn-error rounded-2xl text-error-content"
+                disabled={isDeleting}>
+                {isDeleting ? "Removing..." : "Yes, remove"}
+              </button>
+            </div>
+          </div>
+          <button
+            className="modal-backdrop cursor-pointer"
+            onClick={() => {
+              if (!isDeleting) {
+                setPendingDeleteId(null);
+              }
+            }}>
+            close
+          </button>
+        </dialog>
+      ) : null}
     </div>
   );
 }

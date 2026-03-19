@@ -40,6 +40,7 @@ let isQuitting = false
 const viewsMap: Map<number, BrowserView> = new Map();
 let sessionOrder: number[] = [];
 let currentViewId: number | null = null;
+let isActiveViewAttached = false;
 const SIDEBAR_WIDTH = 120;
 const MIN_VIEW_WIDTH = 320;
 const MIN_WINDOW_HEIGHT = 500;
@@ -267,17 +268,56 @@ const createOrGetWhatsAppView = (id: number): BrowserView => {
   return view;
 };
 
+const clearSessionData = async (id: number, view: BrowserView) => {
+  const partitionSession = view.webContents.session;
+
+  try {
+    await partitionSession.clearStorageData();
+    await partitionSession.clearCache();
+    await partitionSession.clearAuthCache();
+  } catch (err) {
+    console.error(`Error clearing session data for WhatsApp_${id}:`, err);
+  }
+};
+
+const detachActiveView = () => {
+  if (!win || currentViewId === null || !isActiveViewAttached) {
+    return;
+  }
+
+  const activeView = viewsMap.get(currentViewId);
+  if (!activeView) {
+    return;
+  }
+
+  win.removeBrowserView(activeView);
+  isActiveViewAttached = false;
+};
+
+const attachActiveView = () => {
+  if (!win || currentViewId === null || isActiveViewAttached) {
+    return;
+  }
+
+  const activeView = viewsMap.get(currentViewId);
+  if (!activeView) {
+    return;
+  }
+
+  win.addBrowserView(activeView);
+  isActiveViewAttached = true;
+  resizeActiveView();
+};
+
 // 👉 Cambia la vista activa
 const switchToWhatsAppView = (id: number) => {
   const view = createOrGetWhatsAppView(id);
 
-  if (currentViewId !== null && viewsMap.has(currentViewId)) {
-    const oldView = viewsMap.get(currentViewId)!;
-    win!.removeBrowserView(oldView);
-  }
+  detachActiveView();
 
   win!.addBrowserView(view);
   currentViewId = id;
+  isActiveViewAttached = true;
 
   resizeActiveView(); // 👈 aquí fuerzas el ajuste inmediato
 };
@@ -326,13 +366,14 @@ app.whenReady().then(() => {
     switchToWhatsAppView(id);
   });
 
-  ipcMain.handle('close-WhatsApp', (_event, id: number) => {
+  ipcMain.handle('close-WhatsApp', async (_event, id: number) => {
     const view = viewsMap.get(id);
     if (view) {
-      if (currentViewId === id && win) {
-        win.removeBrowserView(view);
+      if (currentViewId === id) {
+        detachActiveView();
         currentViewId = null;
       }
+      await clearSessionData(id, view);
       view.webContents.close();
       viewsMap.delete(id);
       sessionOrder = sessionOrder.filter((sessionId) => sessionId !== id);
@@ -343,6 +384,15 @@ app.whenReady().then(() => {
   ipcMain.handle('reorder-sessions', (_event, ids: number[]) => {
     setSessionOrder(ids);
     return sessionOrder;
+  });
+
+  ipcMain.handle('set-delete-modal-open', (_event, isOpen: boolean) => {
+    if (isOpen) {
+      detachActiveView();
+      return;
+    }
+
+    attachActiveView();
   });
 
   ipcMain.handle('get-sessions', () => {
