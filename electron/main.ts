@@ -38,14 +38,14 @@ let win: BrowserWindow | null
 let tray: Tray | null = null
 let isQuitting = false
 const viewsMap: Map<number, BrowserView> = new Map();
+let sessionOrder: number[] = [];
 let currentViewId: number | null = null;
 const SIDEBAR_WIDTH = 120;
 const MIN_VIEW_WIDTH = 320;
 const MIN_WINDOW_HEIGHT = 500;
 
 const saveSessionState = () => {
-  const ids = Array.from(viewsMap.keys());
-  fs.writeFileSync(stateFilePath, JSON.stringify({ ids }));
+  fs.writeFileSync(stateFilePath, JSON.stringify({ ids: sessionOrder }));
 };
 
 const loadSessionState = (): number[] => {
@@ -61,6 +61,13 @@ const loadSessionState = (): number[] => {
     console.error('Error loading session state:', err);
   }
   return [];
+};
+
+const setSessionOrder = (ids: number[]) => {
+  const validIds = ids.filter((id) => viewsMap.has(id));
+  const missingIds = sessionOrder.filter((id) => !validIds.includes(id) && viewsMap.has(id));
+  sessionOrder = [...validIds, ...missingIds];
+  saveSessionState();
 };
 
 const getViewBounds = (window: BrowserWindow): Rectangle => {
@@ -253,6 +260,9 @@ const createOrGetWhatsAppView = (id: number): BrowserView => {
   view.webContents.loadURL('https://web.whatsapp.com');
 
   viewsMap.set(id, view);
+  if (!sessionOrder.includes(id)) {
+    sessionOrder = [...sessionOrder, id];
+  }
   saveSessionState(); // Guarda en disco la lista actual
   return view;
 };
@@ -303,6 +313,7 @@ app.whenReady().then(() => {
   createTray();
 
   const savedIds = loadSessionState();
+  sessionOrder = [...savedIds];
   savedIds.forEach(id => {
     createOrGetWhatsAppView(id); // Carga y crea la vista, no la muestra aún
   });
@@ -324,23 +335,18 @@ app.whenReady().then(() => {
       }
       view.webContents.close();
       viewsMap.delete(id);
+      sessionOrder = sessionOrder.filter((sessionId) => sessionId !== id);
       saveSessionState(); // Actualiza el archivo al eliminar
     }
   });
 
+  ipcMain.handle('reorder-sessions', (_event, ids: number[]) => {
+    setSessionOrder(ids);
+    return sessionOrder;
+  });
+
   ipcMain.handle('get-sessions', () => {
-    try {
-      if (fs.existsSync(stateFilePath)) {
-        const data = fs.readFileSync(stateFilePath, 'utf-8');
-        const parsed = JSON.parse(data);
-        if (Array.isArray(parsed.ids)) {
-          return parsed.ids;
-        }
-      }
-    } catch (err) {
-      console.error('Error reading sessions:', err);
-    }
-    return [];
+    return sessionOrder;
   });
 
 

@@ -1,8 +1,27 @@
 import { useEffect, useState } from "react";
 import { MdDelete } from "react-icons/md";
 import { FaWhatsapp } from "react-icons/fa";
+import { LuGripVertical } from "react-icons/lu";
 
 const SIDEBAR_WIDTH = 120;
+
+const reorderAccounts = (accounts: number[], fromId: number, toId: number) => {
+  if (fromId === toId) {
+    return accounts;
+  }
+
+  const next = [...accounts];
+  const fromIndex = next.indexOf(fromId);
+  const toIndex = next.indexOf(toId);
+
+  if (fromIndex === -1 || toIndex === -1) {
+    return accounts;
+  }
+
+  const [moved] = next.splice(fromIndex, 1);
+  next.splice(toIndex, 0, moved);
+  return next;
+};
 
 declare global {
   interface Window {
@@ -10,6 +29,7 @@ declare global {
       openWhatsApp: (id: number) => void;
       closeWhatsApp: (id: number) => void;
       getSessions: () => Promise<number[]>;
+      reorderSessions: (ids: number[]) => Promise<number[]>;
     };
   }
 }
@@ -17,6 +37,7 @@ declare global {
 export default function App() {
   const [accounts, setAccounts] = useState<number[]>([]);
   const [activeId, setActiveId] = useState<number | null>(null);
+  const [draggedId, setDraggedId] = useState<number | null>(null);
 
   useEffect(() => {
     const loadFromMain = async () => {
@@ -41,11 +62,18 @@ export default function App() {
     window.electronAPI.openWhatsApp(id);
   };
 
+  const persistOrder = (nextAccounts: number[]) => {
+    setAccounts(nextAccounts);
+    void window.electronAPI.reorderSessions(nextAccounts);
+  };
+
   const addAccount = () => {
     const nextId = accounts.length > 0 ? Math.max(...accounts) + 1 : 1;
-    setAccounts((current) => [...current, nextId]);
+    const nextAccounts = [...accounts, nextId];
+    setAccounts(nextAccounts);
     setActiveId(nextId);
     window.electronAPI.openWhatsApp(nextId);
+    void window.electronAPI.reorderSessions(nextAccounts);
   };
 
   const removeAccount = (id: number) => {
@@ -62,6 +90,19 @@ export default function App() {
 
     if (nextActiveId !== null) {
       window.electronAPI.openWhatsApp(nextActiveId);
+    }
+  };
+
+  const handleDrop = (targetId: number) => {
+    if (draggedId === null) {
+      return;
+    }
+
+    const nextAccounts = reorderAccounts(accounts, draggedId, targetId);
+    setDraggedId(null);
+
+    if (nextAccounts !== accounts) {
+      persistOrder(nextAccounts);
     }
   };
 
@@ -95,14 +136,24 @@ export default function App() {
               accounts.map((id) => (
                 <div
                   key={id}
+                  draggable
+                  onDragStart={() => setDraggedId(id)}
+                  onDragEnd={() => setDraggedId(null)}
+                  onDragOver={(event) => event.preventDefault()}
+                  onDrop={() => handleDrop(id)}
                   className={`group flex items-center justify-between rounded-2xl border px-2 py-2 transition-all duration-200 ${
                     activeId === id
                       ? "border-success/40 bg-success/10 shadow-sm"
                       : "border-base-300/70 bg-base-200/55 hover:border-base-content/15 hover:bg-base-200"
+                  } ${
+                    draggedId === id ? "opacity-60" : ""
                   }`}>
+                  <div className="flex cursor-grab items-center px-1 text-base-content/25">
+                    <LuGripVertical className="h-4 w-4" />
+                  </div>
                   <button
                     onClick={() => switchAccount(id)}
-                    className={`flex h-5 flex-1 cursor-pointer items-center justify-center gap-2 rounded-xl transition-colors duration-150 ${
+                    className={`flex h-5 min-w-0 flex-1 cursor-pointer items-center justify-center gap-2 rounded-xl transition-colors duration-150 ${
                       activeId === id
                         ? "text-success"
                         : "text-base-content/70 group-hover:text-base-content"
