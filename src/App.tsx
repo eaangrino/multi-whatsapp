@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 import { MdDelete } from "react-icons/md";
 import { FaWhatsapp } from "react-icons/fa";
 
+const SIDEBAR_WIDTH = 120;
+
 declare global {
   interface Window {
     electronAPI: {
@@ -41,7 +43,7 @@ export default function App() {
 
   const addAccount = () => {
     const nextId = accounts.length > 0 ? Math.max(...accounts) + 1 : 1;
-    setAccounts([...accounts, nextId]);
+    setAccounts((current) => [...current, nextId]);
     setActiveId(nextId);
     window.electronAPI.openWhatsApp(nextId);
   };
@@ -51,73 +53,85 @@ export default function App() {
     setAccounts(updated);
     window.electronAPI.closeWhatsApp(id);
 
-    // Si se eliminó la sesión activa, cambiar a la última disponible
-    if (activeId === id && updated.length > 0) {
-      const lastId = updated[updated.length - 1];
-      setActiveId(lastId);
-      window.electronAPI.openWhatsApp(lastId);
-    } else if (updated.length === 0) {
-      setActiveId(null);
+    if (activeId !== id) {
+      return;
+    }
+
+    const nextActiveId = updated[0] ?? null;
+    setActiveId(nextActiveId);
+
+    if (nextActiveId !== null) {
+      window.electronAPI.openWhatsApp(nextActiveId);
     }
   };
 
   return (
-    <div className="drawer drawer-open">
-      <input id="my-drawer-1" type="checkbox" className="drawer-toggle" />
-      <div className="drawer-content">
-        {/* WhatsApp view render target */}
-        <div id="pageContentHere" className="h-full w-full" />
-      </div>
-      <div className="drawer-side">
-        <label
-          htmlFor="my-drawer-1"
-          aria-label="close sidebar"
-          className="drawer-overlay"></label>
-        <div className="w-30 min-h-full bg-base-100 p-4 flex flex-col justify-between">
-          <div>
-            <h2 className="text-xs uppercase tracking-widest mb-4 text-slate-400 font-medium">
-              Cuentas
-            </h2>
-            <div className="flex flex-col gap-2">
-              {accounts.map((id) => (
+    <div className="flex h-full w-full overflow-hidden">
+      <aside
+        className="flex h-full shrink-0 flex-col border-r border-base-300/60 bg-base-100/95 px-3 py-4 backdrop-blur"
+        style={{ width: `${SIDEBAR_WIDTH}px` }}>
+        <div className="mb-4 flex items-center justify-center">
+          <div className="flex h-12 w-12 items-center justify-center rounded-2xl border border-success/20 bg-success/10 text-success shadow-sm">
+            <FaWhatsapp className="h-5 w-5" />
+          </div>
+        </div>
+
+        <div className="flex min-h-0 flex-1 flex-col">
+          <div className="mb-3 text-center">
+            <p className="text-[10px] font-semibold uppercase tracking-[0.28em] text-base-content/45">
+              Accounts
+            </p>
+            <p className="mt-1 text-[11px] text-base-content/55">
+              {accounts.length} active
+            </p>
+          </div>
+
+          <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto pb-2">
+            {accounts.length === 0 ? (
+              <div className="rounded-2xl border border-dashed border-base-300/80 bg-base-200/50 px-3 py-4 text-center text-[11px] leading-relaxed text-base-content/50">
+                Add an account to get started.
+              </div>
+            ) : (
+              accounts.map((id) => (
                 <div
                   key={id}
-                  className={`shadow-sm flex overflow-hidden border-l-4 transition-all duration-200 ${
+                  className={`group flex items-center justify-between rounded-2xl border px-2 py-2 transition-all duration-200 ${
                     activeId === id
-                      ? "border-l-green-500 bg-green-950/30 shadow-green-400/20"
-                      : "border-l-slate-700 bg-slate-900/50 hover:bg-slate-800/50"
+                      ? "border-success/40 bg-success/10 shadow-sm"
+                      : "border-base-300/70 bg-base-200/55 hover:border-base-content/15 hover:bg-base-200"
                   }`}>
                   <button
                     onClick={() => switchAccount(id)}
-                    className={`flex-1 h-12 flex items-center justify-center text-slate-200 transition-colors duration-150 ${
+                    className={`flex h-5 flex-1 cursor-pointer items-center justify-center gap-2 rounded-xl transition-colors duration-150 ${
                       activeId === id
-                        ? "bg-green-900/40"
-                        : "bg-slate-900 hover:bg-slate-800"
+                        ? "text-success"
+                        : "text-base-content/70 group-hover:text-base-content"
                     }`}>
-                    <div className="relative">
-                      <FaWhatsapp className="w-5 h-5" />
-                      <span className="absolute -top-1.5 -right-2 text-[10px] font-bold px-1.5 py-0.5 rounded-full border border-slate-900 shadow text-zinc-900 bg-green-400">
-                        {id}
-                      </span>
-                    </div>
+                    <FaWhatsapp className="h-4 w-4" />
+                    <span className="text-xs font-semibold">#{id}</span>
                   </button>
                   <button
                     onClick={() => removeAccount(id)}
-                    className="w-12 h-12 flex items-center justify-center text-slate-200 bg-red-900/60 hover:bg-red-900 border-l border-slate-700 transition-colors duration-150"
-                    title="Eliminar">
-                    <MdDelete className="w-4 h-4" />
+                    className="btn btn-ghost btn-xs h-8 min-h-8 w-8 cursor-pointer rounded-lg border-0 px-0 text-base-content/35 hover:bg-error/12 hover:text-error"
+                    title="Remove">
+                    <MdDelete className="h-4 w-4" />
                   </button>
                 </div>
-              ))}
-            </div>
+              ))
+            )}
           </div>
+
           <button
             onClick={addAccount}
-            className="mt-3 text-sm font-semibold tracking-wide bg-linear-to-r from-green-600 to-green-500 text-zinc-900 px-3 py-2.5 hover:from-green-500 hover:to-green-400 transition shadow-sm">
-            + Añadir
+            className="btn btn-success mt-3 cursor-pointer rounded-2xl text-sm font-semibold normal-case shadow-sm">
+            New account
           </button>
         </div>
-      </div>
+      </aside>
+
+      <main className="h-full min-w-0 flex-1 bg-base-200/20">
+        <div id="pageContentHere" className="h-full w-full" />
+      </main>
     </div>
   );
 }

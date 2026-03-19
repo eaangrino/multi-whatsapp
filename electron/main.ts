@@ -1,5 +1,4 @@
-import { app, BrowserWindow, ipcMain, BrowserView } from 'electron'
-import { createRequire } from 'node:module'
+import { app, BrowserWindow, ipcMain, BrowserView, Rectangle, Menu, Tray, nativeImage } from 'electron'
 import { fileURLToPath } from 'node:url'
 import fs from 'node:fs';
 import path from 'node:path';
@@ -8,7 +7,6 @@ import path from 'node:path';
 
 const stateFilePath = path.join(app.getPath('userData'), 'wa-sessions.json');
 
-const require = createRequire(import.meta.url)
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
 // The built directory structure
@@ -26,8 +24,10 @@ process.env.APP_ROOT = path.join(__dirname, '..')
 export const VITE_DEV_SERVER_URL = process.env[ 'VITE_DEV_SERVER_URL' ]
 export const MAIN_DIST = path.join(process.env.APP_ROOT, 'dist-electron')
 export const RENDERER_DIST = path.join(process.env.APP_ROOT, 'dist')
+export const PUBLIC_DIST = path.join(process.env.APP_ROOT, 'public')
 
 process.env.VITE_PUBLIC = VITE_DEV_SERVER_URL ? path.join(process.env.APP_ROOT, 'public') : RENDERER_DIST
+const trayIconPath = path.join(PUBLIC_DIST, 'whatsapp.png');
 
 
 // if (started) {
@@ -35,9 +35,13 @@ process.env.VITE_PUBLIC = VITE_DEV_SERVER_URL ? path.join(process.env.APP_ROOT, 
 // }
 
 let win: BrowserWindow | null
+let tray: Tray | null = null
+let isQuitting = false
 const viewsMap: Map<number, BrowserView> = new Map();
 let currentViewId: number | null = null;
 const SIDEBAR_WIDTH = 120;
+const MIN_VIEW_WIDTH = 320;
+const MIN_WINDOW_HEIGHT = 500;
 
 const saveSessionState = () => {
   const ids = Array.from(viewsMap.keys());
@@ -59,20 +63,25 @@ const loadSessionState = (): number[] => {
   return [];
 };
 
+const getViewBounds = (window: BrowserWindow): Rectangle => {
+  const [contentWidth, contentHeight] = window.getContentSize();
+  const width = Math.max(contentWidth - SIDEBAR_WIDTH, MIN_VIEW_WIDTH);
+
+  return {
+    x: SIDEBAR_WIDTH,
+    y: 0,
+    width,
+    height: contentHeight,
+  };
+};
+
 const resizeActiveView = () => {
   if (!win || currentViewId === null) return;
 
   const view = viewsMap.get(currentViewId);
   if (!view) return;
 
-  const [ width, height ] = win.getContentSize();
-
-  view.setBounds({
-    x: SIDEBAR_WIDTH,
-    y: 0,
-    width: width - SIDEBAR_WIDTH,
-    height,
-  });
+  view.setBounds(getViewBounds(win));
 };
 
 const resizeActiveViewDeferred = () => {
@@ -81,10 +90,28 @@ const resizeActiveViewDeferred = () => {
   });
 };
 
+const getAppIconPath = () => {
+  if (fs.existsSync(trayIconPath)) {
+    return trayIconPath;
+  }
+
+  return path.join(PUBLIC_DIST, 'WhatsApp.svg');
+};
+
+const createTrayIcon = () => {
+  const icon = nativeImage.createFromPath(getAppIconPath());
+
+  if (process.platform === 'linux' && !icon.isEmpty()) {
+    return icon.resize({ width: 22, height: 22 });
+  }
+
+  return icon;
+};
+
 const bindResizeEvents = () => {
   if (!win) return;
 
-  win.on('resize', resizeActiveView);
+  win.on('resize', resizeActiveViewDeferred);
   win.on('maximize', resizeActiveViewDeferred);
   win.on('unmaximize', resizeActiveViewDeferred);
   win.on('restore', resizeActiveViewDeferred);
@@ -93,10 +120,75 @@ const bindResizeEvents = () => {
   win.on('show', resizeActiveViewDeferred);
 };
 
+const showMainWindow = () => {
+  if (!win) {
+    createWindow();
+    return;
+  }
+
+  if (win.isMinimized()) {
+    win.restore();
+  }
+
+  win.show();
+  win.focus();
+  resizeActiveViewDeferred();
+};
+
+const createTray = () => {
+  if (tray) {
+    return tray;
+  }
+
+  const trayIcon = createTrayIcon();
+  tray = new Tray(trayIcon);
+  tray.setToolTip('Multi-WhatsApp');
+  tray.setContextMenu(
+    Menu.buildFromTemplate([
+      {
+        label: 'Open Multi-WhatsApp',
+        click: () => showMainWindow(),
+      },
+      {
+        type: 'separator',
+      },
+      {
+        label: 'Quit',
+        click: () => {
+          isQuitting = true;
+          tray?.destroy();
+          tray = null;
+          win?.destroy();
+          app.quit();
+        },
+      },
+    ]),
+  );
+  tray.on('click', () => {
+    if (!win) {
+      createWindow();
+      return;
+    }
+
+    if (win.isVisible()) {
+      win.hide();
+      return;
+    }
+
+    showMainWindow();
+  });
+
+  return tray;
+};
+
 
 function createWindow() {
   win = new BrowserWindow({
-    icon: path.join(process.env.VITE_PUBLIC, 'whatsApp.svg'),
+    width: 1400,
+    height: 900,
+    minWidth: SIDEBAR_WIDTH + MIN_VIEW_WIDTH,
+    minHeight: MIN_WINDOW_HEIGHT,
+    icon: getAppIconPath(),
     webPreferences: {
       preload: path.join(__dirname, 'preload.mjs'),
     },
@@ -119,9 +211,20 @@ function createWindow() {
     win.webContents.openDevTools({ mode: 'detach' });
   }
 
-  // Escuchar cambios de tamaño
-  // win!.on('resize', resizeActiveView);
   bindResizeEvents();
+
+  win.on('close', (event) => {
+    if (isQuitting) {
+      return;
+    }
+
+    event.preventDefault();
+    win?.hide();
+  });
+
+  win.on('closed', () => {
+    win = null;
+  });
 }
 
 const createOrGetWhatsAppView = (id: number): BrowserView => {
@@ -142,8 +245,9 @@ const createOrGetWhatsAppView = (id: number): BrowserView => {
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
   view.webContents.setUserAgent(chromeUserAgent);
 
-  // NOTA: Puedes ajustar esto dinámicamente si agregas resize más adelante
-  view.setBounds({ x: 200, y: 0, width: 1000, height: 800 });
+  if (win) {
+    view.setBounds(getViewBounds(win));
+  }
   view.setAutoResize({ width: true, height: true });
 
   view.webContents.loadURL('https://web.whatsapp.com');
@@ -173,22 +277,30 @@ const switchToWhatsAppView = (id: number) => {
 // for applications and their menu bar to stay active until the user quits
 // explicitly with Cmd + Q.
 app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') {
+  if (process.platform !== 'darwin' && isQuitting) {
     app.quit()
     win = null
   }
 })
 
 app.on('activate', () => {
-  // On OS X it's common to re-create a window in the app when the
-  // dock icon is clicked and there are no other windows open.
+  if (win) {
+    showMainWindow();
+    return;
+  }
+
   if (BrowserWindow.getAllWindows().length === 0) {
     createWindow()
   }
 })
 
+app.on('before-quit', () => {
+  isQuitting = true;
+});
+
 app.whenReady().then(() => {
   createWindow();
+  createTray();
 
   const savedIds = loadSessionState();
   savedIds.forEach(id => {
@@ -206,7 +318,10 @@ app.whenReady().then(() => {
   ipcMain.handle('close-WhatsApp', (_event, id: number) => {
     const view = viewsMap.get(id);
     if (view) {
-      win!.removeBrowserView(view);
+      if (currentViewId === id && win) {
+        win.removeBrowserView(view);
+        currentViewId = null;
+      }
       view.webContents.close();
       viewsMap.delete(id);
       saveSessionState(); // Actualiza el archivo al eliminar
