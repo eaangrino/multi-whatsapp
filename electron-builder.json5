@@ -9,10 +9,12 @@
   },
   files: ["dist", "dist-electron", "public"],
   mac: {
+    icon: "public/whatsapp.png",
     target: ["dmg"],
     artifactName: "${productName}-Mac-${version}-Installer.${ext}",
   },
   win: {
+    icon: "public/whatsapp.ico",
     target: [
       {
         target: "nsis",
@@ -28,7 +30,8 @@
     deleteAppDataOnUninstall: true,
   },
   linux: {
-    target: ["AppImage"],
+    icon: "public/whatsapp.png",
+    target: ["AppImage", "deb", "rpm", "tar.gz"],
     artifactName: "${productName}-Linux-${version}.${ext}",
   },
 }
