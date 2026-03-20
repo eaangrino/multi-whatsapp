@@ -28,5 +28,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   closeWhatsApp: (id: number) => ipcRenderer.invoke('close-WhatsApp', id),
   getSessions: (): Promise<number[]> => ipcRenderer.invoke('get-sessions'), // 👈 IMPORTANTE
   reorderSessions: (ids: number[]): Promise<number[]> => ipcRenderer.invoke('reorder-sessions', ids),
-  setDeleteModalOpen: (isOpen: boolean): Promise<void> => ipcRenderer.invoke('set-delete-modal-open', isOpen),
+  setActiveViewVisible: (isVisible: boolean): Promise<void> => ipcRenderer.invoke('set-active-view-visible', isVisible),
+  getStartOnLogin: (): Promise<boolean> => ipcRenderer.invoke('get-start-on-login'),
+  setStartOnLogin: (enabled: boolean): Promise<boolean> => ipcRenderer.invoke('set-start-on-login', enabled),
+  setSidebarWidth: (width: number): Promise<void> => ipcRenderer.invoke('set-sidebar-width', width),
 });

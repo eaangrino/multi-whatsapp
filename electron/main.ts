@@ -41,7 +41,8 @@ const viewsMap: Map<number, BrowserView> = new Map();
 let sessionOrder: number[] = [];
 let currentViewId: number | null = null;
 let isActiveViewAttached = false;
-const SIDEBAR_WIDTH = 120;
+const DEFAULT_SIDEBAR_WIDTH = 120;
+let sidebarWidth = DEFAULT_SIDEBAR_WIDTH;
 const MIN_VIEW_WIDTH = 320;
 const MIN_WINDOW_HEIGHT = 500;
 
@@ -73,10 +74,10 @@ const setSessionOrder = (ids: number[]) => {
 
 const getViewBounds = (window: BrowserWindow): Rectangle => {
   const [contentWidth, contentHeight] = window.getContentSize();
-  const width = Math.max(contentWidth - SIDEBAR_WIDTH, MIN_VIEW_WIDTH);
+  const width = Math.max(contentWidth - sidebarWidth, MIN_VIEW_WIDTH);
 
   return {
-    x: SIDEBAR_WIDTH,
+    x: sidebarWidth,
     y: 0,
     width,
     height: contentHeight,
@@ -194,7 +195,7 @@ function createWindow() {
   win = new BrowserWindow({
     width: 1400,
     height: 900,
-    minWidth: SIDEBAR_WIDTH + MIN_VIEW_WIDTH,
+    minWidth: DEFAULT_SIDEBAR_WIDTH + MIN_VIEW_WIDTH,
     minHeight: MIN_WINDOW_HEIGHT,
     icon: getAppIconPath(),
     webPreferences: {
@@ -309,6 +310,30 @@ const attachActiveView = () => {
   resizeActiveView();
 };
 
+const setActiveViewVisible = (isVisible: boolean) => {
+  if (isVisible) {
+    attachActiveView();
+    return;
+  }
+
+  detachActiveView();
+};
+
+const getStartOnLogin = () => app.getLoginItemSettings().openAtLogin;
+
+const setStartOnLogin = (enabled: boolean) => {
+  app.setLoginItemSettings({
+    openAtLogin: enabled,
+  });
+
+  return getStartOnLogin();
+};
+
+const setSidebarWidth = (nextWidth: number) => {
+  sidebarWidth = Math.max(56, Math.floor(nextWidth));
+  resizeActiveViewDeferred();
+};
+
 // 👉 Cambia la vista activa
 const switchToWhatsAppView = (id: number) => {
   const view = createOrGetWhatsAppView(id);
@@ -386,17 +411,24 @@ app.whenReady().then(() => {
     return sessionOrder;
   });
 
-  ipcMain.handle('set-delete-modal-open', (_event, isOpen: boolean) => {
-    if (isOpen) {
-      detachActiveView();
-      return;
-    }
-
-    attachActiveView();
+  ipcMain.handle('set-active-view-visible', (_event, isVisible: boolean) => {
+    setActiveViewVisible(isVisible);
   });
 
   ipcMain.handle('get-sessions', () => {
     return sessionOrder;
+  });
+
+  ipcMain.handle('get-start-on-login', () => {
+    return getStartOnLogin();
+  });
+
+  ipcMain.handle('set-start-on-login', (_event, enabled: boolean) => {
+    return setStartOnLogin(enabled);
+  });
+
+  ipcMain.handle('set-sidebar-width', (_event, nextWidth: number) => {
+    setSidebarWidth(nextWidth);
   });
 
 
