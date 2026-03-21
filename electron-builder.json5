@@ -31,7 +31,7 @@
   },
   linux: {
     icon: "public/whatsapp.png",
-    target: ["AppImage", "deb", "rpm", "tar.gz"],
+    target: ["AppImage", "deb", "tar.gz"],
     artifactName: "${productName}-Linux-${version}.${ext}",
   },
 }
