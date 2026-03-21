@@ -12,6 +12,7 @@ import { FiSettings } from "react-icons/fi";
 const SIDEBAR_EXPANDED_WIDTH = 120;
 const SIDEBAR_COMPACT_WIDTH = 72;
 type AppView = "sessions" | "settings";
+type SupportedPlatform = "linux" | "win32" | "darwin";
 
 const reorderAccounts = (accounts: number[], fromId: number, toId: number) => {
   if (fromId === toId) {
@@ -42,6 +43,7 @@ declare global {
       getStartOnLogin: () => Promise<boolean>;
       setStartOnLogin: (enabled: boolean) => Promise<boolean>;
       setSidebarWidth: (width: number) => Promise<void>;
+      getPlatform: () => Promise<SupportedPlatform>;
     };
   }
 }
@@ -56,12 +58,15 @@ export default function App() {
   const [startOnLogin, setStartOnLogin] = useState(false);
   const [isUpdatingStartOnLogin, setIsUpdatingStartOnLogin] = useState(false);
   const [isSidebarCompact, setIsSidebarCompact] = useState(false);
+  const [platform, setPlatform] = useState<SupportedPlatform>("linux");
 
   useEffect(() => {
     const loadFromMain = async () => {
       try {
         const ids = await window.electronAPI.getSessions();
         const startOnLoginEnabled = await window.electronAPI.getStartOnLogin();
+        const currentPlatform = await window.electronAPI.getPlatform();
+        setPlatform(currentPlatform);
         setStartOnLogin(startOnLoginEnabled);
 
         if (Array.isArray(ids) && ids.length > 0) {
@@ -157,6 +162,9 @@ export default function App() {
       persistOrder(nextAccounts);
     }
   };
+
+  const platformLabel =
+    platform === "win32" ? "Windows" : platform === "darwin" ? "macOS" : "Linux";
 
   return (
     <div className="flex h-full w-full overflow-hidden">
@@ -328,7 +336,7 @@ export default function App() {
                       Start on login
                     </h2>
                     <p className="mt-1 text-sm leading-relaxed text-base-content/65">
-                      Launch the app automatically when your Linux session starts.
+                      Launch the app automatically when your {platformLabel} session starts.
                     </p>
                   </div>
                   <input

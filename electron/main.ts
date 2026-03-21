@@ -6,6 +6,8 @@ import path from 'node:path';
 
 
 const stateFilePath = path.join(app.getPath('userData'), 'wa-sessions.json');
+const linuxAutostartDir = path.join(app.getPath('appData'), 'autostart');
+const linuxAutostartPath = path.join(linuxAutostartDir, 'multi-whatsapp.desktop');
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -343,9 +345,58 @@ const setActiveViewVisible = (isVisible: boolean) => {
   detachActiveView();
 };
 
-const getStartOnLogin = () => app.getLoginItemSettings().openAtLogin;
+const escapeDesktopEntryValue = (value: string) =>
+  value.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+
+const getLinuxAutostartDesktopEntry = () => {
+  const executablePath = escapeDesktopEntryValue(process.execPath);
+  const iconPath = escapeDesktopEntryValue(getAppIconPath());
+
+  return [
+    '[Desktop Entry]',
+    'Type=Application',
+    'Version=1.0',
+    'Name=Multi-WhatsApp',
+    'Comment=Desktop app to manage multiple WhatsApp sessions',
+    `Exec="${executablePath}"`,
+    `Icon=${iconPath}`,
+    'Terminal=false',
+    'StartupNotify=false',
+    'Categories=Network;Chat;',
+    'X-GNOME-Autostart-enabled=true',
+    '',
+  ].join('\n');
+};
+
+const isLinuxAutostartEnabled = () => fs.existsSync(linuxAutostartPath);
+
+const setLinuxAutostart = (enabled: boolean) => {
+  if (enabled) {
+    fs.mkdirSync(linuxAutostartDir, { recursive: true });
+    fs.writeFileSync(linuxAutostartPath, getLinuxAutostartDesktopEntry(), 'utf-8');
+    return true;
+  }
+
+  if (fs.existsSync(linuxAutostartPath)) {
+    fs.unlinkSync(linuxAutostartPath);
+  }
+
+  return false;
+};
+
+const getStartOnLogin = () => {
+  if (process.platform === 'linux') {
+    return isLinuxAutostartEnabled();
+  }
+
+  return app.getLoginItemSettings().openAtLogin;
+};
 
 const setStartOnLogin = (enabled: boolean) => {
+  if (process.platform === 'linux') {
+    return setLinuxAutostart(enabled);
+  }
+
   app.setLoginItemSettings({
     openAtLogin: enabled,
   });
@@ -466,6 +517,10 @@ app.whenReady().then(() => {
 
   ipcMain.handle('set-start-on-login', (_event, enabled: boolean) => {
     return setStartOnLogin(enabled);
+  });
+
+  ipcMain.handle('get-platform', () => {
+    return process.platform;
   });
 
   ipcMain.handle('set-sidebar-width', (_event, nextWidth: number) => {

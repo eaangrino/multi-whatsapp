@@ -32,4 +32,5 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getStartOnLogin: (): Promise<boolean> => ipcRenderer.invoke('get-start-on-login'),
   setStartOnLogin: (enabled: boolean): Promise<boolean> => ipcRenderer.invoke('set-start-on-login', enabled),
   setSidebarWidth: (width: number): Promise<void> => ipcRenderer.invoke('set-sidebar-width', width),
+  getPlatform: (): Promise<NodeJS.Platform> => ipcRenderer.invoke('get-platform'),
 });
