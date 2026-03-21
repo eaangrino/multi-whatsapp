@@ -190,6 +190,16 @@ const createTray = () => {
   return tray;
 };
 
+const hasSingleInstanceLock = app.requestSingleInstanceLock();
+
+if (!hasSingleInstanceLock) {
+  app.quit();
+}
+
+app.on('second-instance', () => {
+  showMainWindow();
+});
+
 
 function createWindow() {
   win = new BrowserWindow({
