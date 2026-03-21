@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, BrowserView, Rectangle, Menu, Tray, nativeImage } from 'electron'
+import { app, BrowserWindow, ipcMain, BrowserView, Rectangle, Menu, Tray, nativeImage, shell } from 'electron'
 import { fileURLToPath } from 'node:url'
 import fs from 'node:fs';
 import path from 'node:path';
@@ -253,6 +253,20 @@ const createOrGetWhatsAppView = (id: number): BrowserView => {
   const chromeUserAgent =
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
   view.webContents.setUserAgent(chromeUserAgent);
+  view.webContents.setWindowOpenHandler(({ url }) => {
+    if (!isInternalWhatsAppUrl(url)) {
+      openExternalUrl(url);
+      return { action: 'deny' };
+    }
+
+    return { action: 'allow' };
+  });
+  view.webContents.on('will-navigate', (event, targetUrl) => {
+    if (!isInternalWhatsAppUrl(targetUrl)) {
+      event.preventDefault();
+      openExternalUrl(targetUrl);
+    }
+  });
 
   if (win) {
     view.setBounds(getViewBounds(win));
@@ -332,6 +346,23 @@ const setStartOnLogin = (enabled: boolean) => {
 const setSidebarWidth = (nextWidth: number) => {
   sidebarWidth = Math.max(56, Math.floor(nextWidth));
   resizeActiveViewDeferred();
+};
+
+const isInternalWhatsAppUrl = (targetUrl: string) => {
+  try {
+    const parsedUrl = new URL(targetUrl);
+    return (
+      parsedUrl.protocol === 'https:' &&
+      (parsedUrl.hostname === 'whatsapp.com' ||
+        parsedUrl.hostname.endsWith('.whatsapp.com'))
+    );
+  } catch {
+    return false;
+  }
+};
+
+const openExternalUrl = (targetUrl: string) => {
+  void shell.openExternal(targetUrl);
 };
 
 // 👉 Cambia la vista activa
