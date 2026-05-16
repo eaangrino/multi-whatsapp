@@ -9,20 +9,24 @@ import {
 } from "react-icons/lu";
 import { FiSettings } from "react-icons/fi";
 
-const SIDEBAR_EXPANDED_WIDTH = 120;
+const SIDEBAR_EXPANDED_WIDTH = 160;
 const SIDEBAR_COMPACT_WIDTH = 72;
 type AppView = "sessions" | "settings";
 type SupportedPlatform = "linux" | "win32" | "darwin";
 
-const reorderAccounts = (accounts: number[], fromId: number, toId: number) => {
-  if (fromId === toId) {
-    return accounts;
-  }
+type WhatsAppSession = {
+  id: number;
+  name: string;
+};
 
+const reorderAccounts = (
+  accounts: WhatsAppSession[],
+  fromId: number,
+  toId: number,
+) => {
   const next = [...accounts];
-  const fromIndex = next.indexOf(fromId);
-  const toIndex = next.indexOf(toId);
-
+  const fromIndex = next.findIndex((account) => account.id === fromId);
+  const toIndex = next.findIndex((account) => account.id === toId);
   if (fromIndex === -1 || toIndex === -1) {
     return accounts;
   }
@@ -35,14 +39,18 @@ const reorderAccounts = (accounts: number[], fromId: number, toId: number) => {
 declare global {
   interface Window {
     electronAPI: {
-      openWhatsApp: (id: number) => void;
+      openWhatsApp: (id: number) => Promise<void>;
       closeWhatsApp: (id: number) => Promise<void>;
-      getSessions: () => Promise<number[]>;
-      reorderSessions: (ids: number[]) => Promise<number[]>;
+      getSessions: () => Promise<WhatsAppSession[]>;
+      reorderSessions: (
+        sessions: WhatsAppSession[],
+      ) => Promise<WhatsAppSession[]>;
       setActiveViewVisible: (isVisible: boolean) => Promise<void>;
       getStartOnLogin: () => Promise<boolean>;
       setStartOnLogin: (enabled: boolean) => Promise<boolean>;
       setSidebarWidth: (width: number) => Promise<void>;
+      getSidebarCompact: () => Promise<boolean>;
+      setSidebarCompact: (isCompact: boolean) => Promise<boolean>;
       getPlatform: () => Promise<SupportedPlatform>;
     };
   }
@@ -50,10 +58,12 @@ declare global {
 
 export default function App() {
   const [currentView, setCurrentView] = useState<AppView>("sessions");
-  const [accounts, setAccounts] = useState<number[]>([]);
+  const [accounts, setAccounts] = useState<WhatsAppSession[]>([]);
   const [activeId, setActiveId] = useState<number | null>(null);
   const [draggedId, setDraggedId] = useState<number | null>(null);
   const [pendingDeleteId, setPendingDeleteId] = useState<number | null>(null);
+  const [isCreateSessionOpen, setIsCreateSessionOpen] = useState(false);
+  const [newSessionName, setNewSessionName] = useState("");
   const [isDeleting, setIsDeleting] = useState(false);
   const [startOnLogin, setStartOnLogin] = useState(false);
   const [isUpdatingStartOnLogin, setIsUpdatingStartOnLogin] = useState(false);
@@ -63,16 +73,18 @@ export default function App() {
   useEffect(() => {
     const loadFromMain = async () => {
       try {
-        const ids = await window.electronAPI.getSessions();
+        const sessions = await window.electronAPI.getSessions();
         const startOnLoginEnabled = await window.electronAPI.getStartOnLogin();
         const currentPlatform = await window.electronAPI.getPlatform();
+        const sidebarCompact = await window.electronAPI.getSidebarCompact();
         setPlatform(currentPlatform);
         setStartOnLogin(startOnLoginEnabled);
+        setIsSidebarCompact(sidebarCompact);
 
-        if (Array.isArray(ids) && ids.length > 0) {
-          setAccounts(ids);
-          setActiveId(ids[0]);
-          window.electronAPI.openWhatsApp(ids[0]);
+        if (Array.isArray(sessions) && sessions.length > 0) {
+          setAccounts(sessions);
+          setActiveId(sessions[0].id);
+          void window.electronAPI.openWhatsApp(sessions[0].id);
         }
       } catch (err) {
         console.error("Error loading sessions from main:", err);
@@ -84,9 +96,12 @@ export default function App() {
 
   useEffect(() => {
     const shouldShowBrowserView =
-      currentView === "sessions" && pendingDeleteId === null;
+      currentView === "sessions" &&
+      pendingDeleteId === null &&
+      !isCreateSessionOpen;
+
     void window.electronAPI.setActiveViewVisible(shouldShowBrowserView);
-  }, [currentView, pendingDeleteId]);
+  }, [currentView, pendingDeleteId, isCreateSessionOpen]);
 
   useEffect(() => {
     const nextWidth = isSidebarCompact
@@ -98,10 +113,10 @@ export default function App() {
   const switchAccount = (id: number) => {
     setCurrentView("sessions");
     setActiveId(id);
-    window.electronAPI.openWhatsApp(id);
+    void window.electronAPI.openWhatsApp(id);
   };
 
-  const persistOrder = (nextAccounts: number[]) => {
+  const persistOrder = (nextAccounts: WhatsAppSession[]) => {
     setAccounts(nextAccounts);
     void window.electronAPI.reorderSessions(nextAccounts);
   };
@@ -117,12 +132,57 @@ export default function App() {
     }
   };
 
+  const handleSidebarCompactChange = async () => {
+    const nextValue = !isSidebarCompact;
+    setIsSidebarCompact(nextValue);
+
+    try {
+      const persistedValue =
+        await window.electronAPI.setSidebarCompact(nextValue);
+      setIsSidebarCompact(persistedValue);
+    } catch (err) {
+      console.error("Error updating sidebar compact state:", err);
+      setIsSidebarCompact(!nextValue);
+    }
+  };
+
+  const getNextAccountId = () =>
+    accounts.length > 0
+      ? Math.max(...accounts.map((account) => account.id)) + 1
+      : 1;
+
+  const openCreateSessionModal = () => {
+    const nextId = getNextAccountId();
+
+    setCurrentView("sessions");
+    setNewSessionName(`name ${nextId}`);
+    setIsCreateSessionOpen(true);
+  };
+
+  const closeCreateSessionModal = () => {
+    setIsCreateSessionOpen(false);
+    setNewSessionName("");
+  };
+
   const addAccount = () => {
-    const nextId = accounts.length > 0 ? Math.max(...accounts) + 1 : 1;
-    const nextAccounts = [...accounts, nextId];
+    const name = newSessionName.trim();
+
+    if (name.length === 0) {
+      return;
+    }
+
+    const nextId = getNextAccountId();
+    const nextAccount: WhatsAppSession = {
+      id: nextId,
+      name: name.slice(0, 50),
+    };
+    const nextAccounts = [...accounts, nextAccount];
+
     setAccounts(nextAccounts);
     setActiveId(nextId);
-    window.electronAPI.openWhatsApp(nextId);
+    setIsCreateSessionOpen(false);
+    setNewSessionName("");
+    void window.electronAPI.openWhatsApp(nextId);
     void window.electronAPI.reorderSessions(nextAccounts);
   };
 
@@ -130,7 +190,7 @@ export default function App() {
     setIsDeleting(true);
 
     try {
-      const updated = accounts.filter((acc) => acc !== id);
+      const updated = accounts.filter((account) => account.id !== id);
       setAccounts(updated);
       await window.electronAPI.closeWhatsApp(id);
 
@@ -138,11 +198,11 @@ export default function App() {
         return;
       }
 
-      const nextActiveId = updated[0] ?? null;
+      const nextActiveId = updated[0]?.id ?? null;
       setActiveId(nextActiveId);
 
       if (nextActiveId !== null) {
-        window.electronAPI.openWhatsApp(nextActiveId);
+        void window.electronAPI.openWhatsApp(nextActiveId);
       }
     } finally {
       setIsDeleting(false);
@@ -164,7 +224,11 @@ export default function App() {
   };
 
   const platformLabel =
-    platform === "win32" ? "Windows" : platform === "darwin" ? "macOS" : "Linux";
+    platform === "win32"
+      ? "Windows"
+      : platform === "darwin"
+        ? "macOS"
+        : "Linux";
 
   return (
     <div className="flex h-full w-full overflow-hidden">
@@ -203,7 +267,7 @@ export default function App() {
                 Add an account to get started.
               </div>
             ) : currentView === "sessions" ? (
-              accounts.map((id) => (
+              accounts.map(({ id, name }) => (
                 <div
                   key={id}
                   draggable={!isSidebarCompact}
@@ -227,9 +291,7 @@ export default function App() {
                     activeId === id
                       ? "border-success/40 bg-success/10 shadow-sm"
                       : "border-base-300/70 bg-base-200/55 hover:border-base-content/15 hover:bg-base-200"
-                  } ${
-                    draggedId === id ? "opacity-60" : ""
-                  }`}>
+                  } ${draggedId === id ? "opacity-60" : ""}`}>
                   {!isSidebarCompact ? (
                     <div className="flex cursor-grab items-center px-1 text-base-content/25">
                       <LuGripVertical className="h-4 w-4" />
@@ -237,17 +299,24 @@ export default function App() {
                   ) : null}
                   <button
                     onClick={() => switchAccount(id)}
-                    title={`Account #${id}`}
-                    className={`flex ${
-                      isSidebarCompact ? "h-10 w-full" : "h-5 min-w-0 flex-1"
-                    } cursor-pointer items-center justify-center gap-2 rounded-xl transition-colors duration-150 ${
+                    title={`${name} (#${id})`}
+                    className={`flex h-10 min-w-0 cursor-pointer items-center gap-2 rounded-xl transition-colors duration-150 ${
+                      isSidebarCompact
+                        ? "w-full justify-center"
+                        : "flex-1 justify-start"
+                    } ${
                       activeId === id
                         ? "text-success"
                         : "text-base-content/70 group-hover:text-base-content"
                     }`}>
                     <FaWhatsapp className="h-4 w-4" />
                     {!isSidebarCompact ? (
-                      <span className="text-xs font-semibold">#{id}</span>
+                      <span className="min-w-0 flex-1 truncate text-left text-xs font-semibold">
+                        {name}
+                        <span className="ml-1 text-[10px] font-medium text-base-content/45">
+                          #{id}
+                        </span>
+                      </span>
                     ) : null}
                   </button>
                   {!isSidebarCompact ? (
@@ -266,7 +335,7 @@ export default function App() {
           <div className="mt-3 flex flex-col gap-2">
             {currentView === "sessions" ? (
               <button
-                onClick={addAccount}
+                onClick={openCreateSessionModal}
                 title="New account"
                 className="btn btn-success cursor-pointer rounded-2xl text-sm font-semibold normal-case shadow-sm">
                 <LuPlus className="h-4 w-4" />
@@ -295,7 +364,7 @@ export default function App() {
             </button>
 
             <button
-              onClick={() => setIsSidebarCompact((current) => !current)}
+              onClick={() => void handleSidebarCompactChange()}
               title={isSidebarCompact ? "Expand sidebar" : "Compact sidebar"}
               className="btn btn-ghost cursor-pointer rounded-2xl border border-base-300/70 bg-base-200/50 text-sm font-medium normal-case text-base-content/70 hover:border-success/25 hover:bg-success/8 hover:text-success">
               {isSidebarCompact ? (
@@ -303,9 +372,7 @@ export default function App() {
               ) : (
                 <LuPanelLeftClose className="h-4 w-4" />
               )}
-              {!isSidebarCompact
-                ? "Compact sidebar"
-                : null}
+              {!isSidebarCompact ? "Compact sidebar" : null}
             </button>
           </div>
         </div>
@@ -316,7 +383,7 @@ export default function App() {
           <div id="pageContentHere" className="h-full w-full" />
         ) : (
           <section className="flex h-full w-full items-center justify-center p-8">
-            <div className="w-full max-w-2xl rounded-[2rem] border border-base-300/60 bg-base-100/90 p-8 shadow-xl backdrop-blur">
+            <div className="w-full max-w-2xl rounded-4xl border border-base-300/60 bg-base-100/90 p-8 shadow-xl backdrop-blur">
               <div className="mb-8">
                 <p className="text-xs font-semibold uppercase tracking-[0.28em] text-base-content/45">
                   Configuration
@@ -336,7 +403,8 @@ export default function App() {
                       Start on login
                     </h2>
                     <p className="mt-1 text-sm leading-relaxed text-base-content/65">
-                      Launch the app automatically when your {platformLabel} session starts.
+                      Launch the app automatically when your {platformLabel}{" "}
+                      session starts.
                     </p>
                   </div>
                   <input
@@ -354,6 +422,56 @@ export default function App() {
           </section>
         )}
       </main>
+
+      {isCreateSessionOpen ? (
+        <dialog className="modal modal-open">
+          <div className="modal-box max-w-sm rounded-3xl border border-base-300/70 bg-base-100 shadow-xl">
+            <h3 className="text-lg font-semibold text-base-content">
+              New WhatsApp session
+            </h3>
+            <p className="mt-3 text-sm leading-relaxed text-base-content/70">
+              Choose a visible name for this session. The internal id stays
+              separate to preserve the Electron partition.
+            </p>
+
+            <form
+              className="mt-5"
+              onSubmit={(event) => {
+                event.preventDefault();
+                addAccount();
+              }}>
+              <input
+                autoFocus
+                className="input input-bordered w-full rounded-2xl"
+                maxLength={50}
+                placeholder="Session name"
+                value={newSessionName}
+                onChange={(event) => setNewSessionName(event.target.value)}
+              />
+
+              <div className="modal-action mt-6">
+                <button
+                  type="button"
+                  onClick={closeCreateSessionModal}
+                  className="btn btn-ghost rounded-2xl">
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="btn btn-success rounded-2xl text-success-content"
+                  disabled={newSessionName.trim().length === 0}>
+                  Create
+                </button>
+              </div>
+            </form>
+          </div>
+          <button
+            className="modal-backdrop cursor-pointer"
+            onClick={closeCreateSessionModal}>
+            close
+          </button>
+        </dialog>
+      ) : null}
 
       {pendingDeleteId !== null ? (
         <dialog className="modal modal-open">

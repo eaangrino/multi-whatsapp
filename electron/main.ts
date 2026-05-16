@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, BrowserView, Rectangle, Menu, Tray, nativeImage, shell } from 'electron'
+import { app, BrowserWindow, ipcMain, BrowserView, Rectangle, Menu, Tray, nativeImage, shell, Notification } from 'electron'
 import { fileURLToPath } from 'node:url'
 import fs from 'node:fs';
 import path from 'node:path';
@@ -6,6 +6,7 @@ import path from 'node:path';
 
 
 const stateFilePath = path.join(app.getPath('userData'), 'wa-sessions.json');
+const settingsFilePath = path.join(app.getPath('userData'), 'app-settings.json');
 const linuxAutostartDir = path.join(app.getPath('appData'), 'autostart');
 const linuxAutostartPath = path.join(linuxAutostartDir, 'multi-whatsapp.desktop');
 
@@ -31,6 +32,21 @@ export const PUBLIC_DIST = path.join(process.env.APP_ROOT, 'public')
 process.env.VITE_PUBLIC = VITE_DEV_SERVER_URL ? path.join(process.env.APP_ROOT, 'public') : RENDERER_DIST
 const trayIconPath = path.join(PUBLIC_DIST, 'whatsapp.png');
 
+type AppSettings = {
+  isSidebarCompact: boolean
+  notificationDurationMs: number
+}
+
+type NotificationPayload = {
+  body?: string
+  silent?: boolean
+  title: string
+}
+
+type WhatsAppSession = {
+  id: number
+  name: string
+}
 
 // if (started) {
 //   app.quit();
@@ -40,42 +56,172 @@ let win: BrowserWindow | null
 let tray: Tray | null = null
 let isQuitting = false
 const viewsMap: Map<number, BrowserView> = new Map();
-let sessionOrder: number[] = [];
+let sessionOrder: WhatsAppSession[] = [];
 let currentViewId: number | null = null;
 let isActiveViewAttached = false;
+let appSettings: AppSettings = {
+  isSidebarCompact: false,
+  notificationDurationMs: 5000,
+};
 const DEFAULT_SIDEBAR_WIDTH = 120;
 let sidebarWidth = DEFAULT_SIDEBAR_WIDTH;
 const MIN_VIEW_WIDTH = 320;
 const MIN_WINDOW_HEIGHT = 500;
 
-const saveSessionState = () => {
-  fs.writeFileSync(stateFilePath, JSON.stringify({ ids: sessionOrder }));
+const DEFAULT_SESSION_NAME_PREFIX = 'name';
+
+const isValidSessionId = (id: unknown): id is number =>
+  typeof id === 'number' && Number.isInteger(id) && id > 0;
+
+const getLegacySessionName = (index: number) =>
+  `${DEFAULT_SESSION_NAME_PREFIX} ${index + 1}`;
+
+const normalizeSessionName = (name: unknown, fallback: string) => {
+  if (typeof name !== 'string') {
+    return fallback;
+  }
+
+  const trimmed = name.trim();
+  return trimmed.length > 0 ? trimmed.slice(0, 50) : fallback;
 };
 
-const loadSessionState = (): number[] => {
+const isSessionLike = (value: unknown): value is { id: number; name?: unknown } => {
+  if (typeof value !== 'object' || value === null) {
+    return false;
+  }
+
+  return isValidSessionId((value as { id?: unknown }).id);
+};
+
+const uniqueSessionsById = (sessions: WhatsAppSession[]) => {
+  const seen = new Set<number>();
+
+  return sessions.filter((session) => {
+    if (seen.has(session.id)) {
+      return false;
+    }
+
+    seen.add(session.id);
+    return true;
+  });
+};
+
+const migrateLegacyIds = (ids: unknown): WhatsAppSession[] => {
+  if (!Array.isArray(ids)) {
+    return [];
+  }
+
+  return uniqueSessionsById(
+    ids
+      .filter(isValidSessionId)
+      .map((id, index) => ({
+        id,
+        name: getLegacySessionName(index),
+      })),
+  );
+};
+
+const normalizeSessions = (sessions: unknown): WhatsAppSession[] => {
+  if (!Array.isArray(sessions)) {
+    return [];
+  }
+
+  return uniqueSessionsById(
+    sessions
+      .filter(isSessionLike)
+      .map((session, index) => ({
+        id: session.id,
+        name: normalizeSessionName(session.name, getLegacySessionName(index)),
+      })),
+  );
+};
+
+const saveSessionState = () => {
+  fs.writeFileSync(stateFilePath, JSON.stringify({ sessions: sessionOrder }));
+};
+
+const loadSessionState = (): WhatsAppSession[] => {
   try {
     if (fs.existsSync(stateFilePath)) {
       const data = fs.readFileSync(stateFilePath, 'utf-8');
-      const parsed = JSON.parse(data);
-      if (Array.isArray(parsed.ids)) {
-        return parsed.ids;
+      const parsed = JSON.parse(data) as unknown;
+
+      if (Array.isArray(parsed)) {
+        return migrateLegacyIds(parsed);
+      }
+
+      if (typeof parsed === 'object' && parsed !== null) {
+        const payload = parsed as { ids?: unknown; sessions?: unknown };
+
+        if (Array.isArray(payload.sessions)) {
+          return normalizeSessions(payload.sessions);
+        }
+
+        if (Array.isArray(payload.ids)) {
+          return migrateLegacyIds(payload.ids);
+        }
       }
     }
   } catch (err) {
     console.error('Error loading session state:', err);
   }
+
   return [];
 };
 
-const setSessionOrder = (ids: number[]) => {
-  const validIds = ids.filter((id) => viewsMap.has(id));
-  const missingIds = sessionOrder.filter((id) => !validIds.includes(id) && viewsMap.has(id));
-  sessionOrder = [...validIds, ...missingIds];
+const loadAppSettings = (): AppSettings => {
+  try {
+    if (fs.existsSync(settingsFilePath)) {
+      const data = fs.readFileSync(settingsFilePath, 'utf-8');
+      const parsed = JSON.parse(data) as Partial<AppSettings>;
+
+      return {
+        isSidebarCompact:
+          typeof parsed.isSidebarCompact === 'boolean'
+            ? parsed.isSidebarCompact
+            : false,
+        notificationDurationMs:
+          typeof parsed.notificationDurationMs === 'number'
+            ? Math.max(1000, parsed.notificationDurationMs)
+            : 5000,
+      };
+    }
+  } catch (err) {
+    console.error('Error loading app settings:', err);
+  }
+
+  return {
+    isSidebarCompact: false,
+    notificationDurationMs: 5000,
+  };
+};
+
+const saveAppSettings = () => {
+  fs.writeFileSync(settingsFilePath, JSON.stringify(appSettings));
+};
+
+const setSessionOrder = (sessions: WhatsAppSession[]) => {
+  const validSessions = uniqueSessionsById(
+    sessions
+      .filter((session) => viewsMap.has(session.id))
+      .map((session, index) => ({
+        id: session.id,
+        name: normalizeSessionName(session.name, getLegacySessionName(index)),
+      })),
+  );
+
+  const missingSessions = sessionOrder.filter(
+    (session) =>
+      !validSessions.some((validSession) => validSession.id === session.id) &&
+      viewsMap.has(session.id),
+  );
+
+  sessionOrder = [ ...validSessions, ...missingSessions ];
   saveSessionState();
 };
 
 const getViewBounds = (window: BrowserWindow): Rectangle => {
-  const [contentWidth, contentHeight] = window.getContentSize();
+  const [ contentWidth, contentHeight ] = window.getContentSize();
   const width = Math.max(contentWidth - sidebarWidth, MIN_VIEW_WIDTH);
 
   return {
@@ -144,6 +290,24 @@ const showMainWindow = () => {
   win.show();
   win.focus();
   resizeActiveViewDeferred();
+};
+
+const showDesktopNotification = ({ title, body, silent }: NotificationPayload) => {
+  if (!Notification.isSupported()) {
+    return;
+  }
+
+  const notification = new Notification({
+    title,
+    body,
+    silent,
+    icon: getAppIconPath(),
+  });
+
+  notification.show();
+  setTimeout(() => {
+    notification.close();
+  }, appSettings.notificationDurationMs);
 };
 
 const createTray = () => {
@@ -259,6 +423,7 @@ const createOrGetWhatsAppView = (id: number): BrowserView => {
       nodeIntegration: false,
       contextIsolation: true,
       partition: `persist:WhatsApp_${id}`,
+      preload: path.join(__dirname, 'preload.mjs'),
     },
   });
 
@@ -288,10 +453,16 @@ const createOrGetWhatsAppView = (id: number): BrowserView => {
   view.webContents.loadURL('https://web.whatsapp.com');
 
   viewsMap.set(id, view);
-  if (!sessionOrder.includes(id)) {
-    sessionOrder = [...sessionOrder, id];
+  if (!sessionOrder.some((session) => session.id === id)) {
+    sessionOrder = [
+      ...sessionOrder,
+      {
+        id,
+        name: getLegacySessionName(sessionOrder.length),
+      },
+    ];
   }
-  saveSessionState(); // Guarda en disco la lista actual
+  saveSessionState();// Guarda en disco la lista actual
   return view;
 };
 
@@ -404,6 +575,28 @@ const setStartOnLogin = (enabled: boolean) => {
   return getStartOnLogin();
 };
 
+const getNotificationDuration = () => Math.round(appSettings.notificationDurationMs / 1000);
+
+const setNotificationDuration = (seconds: number) => {
+  appSettings = {
+    ...appSettings,
+    notificationDurationMs: Math.max(1, Math.floor(seconds)) * 1000,
+  };
+  saveAppSettings();
+  return getNotificationDuration();
+};
+
+const getSidebarCompact = () => appSettings.isSidebarCompact;
+
+const setSidebarCompact = (isCompact: boolean) => {
+  appSettings = {
+    ...appSettings,
+    isSidebarCompact: isCompact,
+  };
+  saveAppSettings();
+  return appSettings.isSidebarCompact;
+};
+
 const setSidebarWidth = (nextWidth: number) => {
   sidebarWidth = Math.max(56, Math.floor(nextWidth));
   resizeActiveViewDeferred();
@@ -466,49 +659,63 @@ app.on('before-quit', () => {
 });
 
 app.whenReady().then(() => {
+  appSettings = loadAppSettings();
   createWindow();
   createTray();
 
-  const savedIds = loadSessionState();
-  sessionOrder = [...savedIds];
-  savedIds.forEach(id => {
-    createOrGetWhatsAppView(id); // Carga y crea la vista, no la muestra aún
+  const savedSessions = loadSessionState();
+  sessionOrder = [ ...savedSessions ];
+  savedSessions.forEach(({ id }) => {
+    createOrGetWhatsAppView(id);
   });
 
-  if (savedIds.length > 0) {
-    switchToWhatsAppView(savedIds[ 0 ]); // Muestra la primera por defecto
+  if (savedSessions.length > 0) {
+    switchToWhatsAppView(savedSessions[ 0 ].id);
   }
 
   ipcMain.handle('open-WhatsApp', (_event, id: number) => {
+    if (!isValidSessionId(id)) {
+      return;
+    }
+
     switchToWhatsAppView(id);
   });
 
   ipcMain.handle('close-WhatsApp', async (_event, id: number) => {
+    if (!isValidSessionId(id)) {
+      return;
+    }
+
     const view = viewsMap.get(id);
     if (view) {
       if (currentViewId === id) {
         detachActiveView();
         currentViewId = null;
       }
+
       await clearSessionData(id, view);
       view.webContents.close();
       viewsMap.delete(id);
-      sessionOrder = sessionOrder.filter((sessionId) => sessionId !== id);
-      saveSessionState(); // Actualiza el archivo al eliminar
+      sessionOrder = sessionOrder.filter((session) => session.id !== id);
+      saveSessionState();
     }
   });
 
-  ipcMain.handle('reorder-sessions', (_event, ids: number[]) => {
-    setSessionOrder(ids);
+  ipcMain.handle('reorder-sessions', (_event, sessions: WhatsAppSession[]) => {
+    setSessionOrder(normalizeSessions(sessions));
     return sessionOrder;
-  });
-
-  ipcMain.handle('set-active-view-visible', (_event, isVisible: boolean) => {
-    setActiveViewVisible(isVisible);
   });
 
   ipcMain.handle('get-sessions', () => {
     return sessionOrder;
+  });
+
+  ipcMain.handle('set-active-view-visible', (_event, isVisible: boolean) => {
+    if (typeof isVisible !== 'boolean') {
+      return;
+    }
+
+    setActiveViewVisible(isVisible);
   });
 
   ipcMain.handle('get-start-on-login', () => {
@@ -523,8 +730,32 @@ app.whenReady().then(() => {
     return process.platform;
   });
 
+  ipcMain.handle('get-notification-duration', () => {
+    return getNotificationDuration();
+  });
+
+  ipcMain.handle('set-notification-duration', (_event, seconds: number) => {
+    return setNotificationDuration(seconds);
+  });
+
+  ipcMain.handle('get-sidebar-compact', () => {
+    return getSidebarCompact();
+  });
+
+  ipcMain.handle('set-sidebar-compact', (_event, isCompact: boolean) => {
+    if (typeof isCompact !== 'boolean') {
+      return getSidebarCompact();
+    }
+
+    return setSidebarCompact(isCompact);
+  });
+
   ipcMain.handle('set-sidebar-width', (_event, nextWidth: number) => {
     setSidebarWidth(nextWidth);
+  });
+
+  ipcMain.on('whatsapp-notification', (_event, payload: NotificationPayload) => {
+    showDesktopNotification(payload);
   });
 
 
