@@ -1,4 +1,4 @@
-import { ipcRenderer, contextBridge } from 'electron'
+import { ipcRenderer, contextBridge, type IpcRendererEvent } from 'electron'
 
 type NotificationPayload = {
   body?: string
@@ -10,6 +10,13 @@ type WhatsAppSession = {
   id: number
   name: string
 }
+
+type WhatsAppLinkRequest = {
+  displayUrl: string
+  url: string
+}
+
+type WhatsAppLinkRequestHandler = (request: WhatsAppLinkRequest) => void
 
 const isWhatsAppContext = window.location.hostname.endsWith('whatsapp.com')
 
@@ -85,4 +92,24 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getPlatform: (): Promise<NodeJS.Platform> => ipcRenderer.invoke('get-platform'),
   getNotificationDuration: (): Promise<number> => ipcRenderer.invoke('get-notification-duration'),
   setNotificationDuration: (seconds: number): Promise<number> => ipcRenderer.invoke('set-notification-duration', seconds),
+  getPendingWhatsAppLinkRequest: (): Promise<WhatsAppLinkRequest | null> =>
+    ipcRenderer.invoke('get-pending-whatsapp-link-request'),
+  clearPendingWhatsAppLinkRequest: (): Promise<void> =>
+    ipcRenderer.invoke('clear-pending-whatsapp-link-request'),
+  openWhatsAppLinkInSession: (
+    sessionId: number,
+    targetUrl: string,
+  ): Promise<boolean> =>
+    ipcRenderer.invoke('open-whatsapp-link-in-session', sessionId, targetUrl),
+  onWhatsAppLinkRequested: (handler: WhatsAppLinkRequestHandler): (() => void) => {
+    const listener = (_event: IpcRendererEvent, request: WhatsAppLinkRequest) => {
+      handler(request)
+    }
+
+    ipcRenderer.on('whatsapp-link-requested', listener)
+
+    return () => {
+      ipcRenderer.off('whatsapp-link-requested', listener)
+    }
+  },
 });

@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, BrowserView, Rectangle, Menu, Tray, nativeImage, shell, Notification } from 'electron'
+import { app, BrowserWindow, ipcMain, BrowserView, Rectangle, Menu, Tray, nativeImage, shell, Notification, IpcMainInvokeEvent } from 'electron'
 import { fileURLToPath } from 'node:url'
 import fs from 'node:fs';
 import path from 'node:path';
@@ -48,6 +48,13 @@ type WhatsAppSession = {
   name: string
 }
 
+type WhatsAppLinkRequest = {
+  displayUrl: string
+  url: string
+}
+
+const WHATSAPP_PROTOCOL = 'whatsapp'
+
 // if (started) {
 //   app.quit();
 // }
@@ -63,6 +70,7 @@ let appSettings: AppSettings = {
   isSidebarCompact: false,
   notificationDurationMs: 5000,
 };
+let pendingWhatsAppLinkRequest: WhatsAppLinkRequest | null = null
 const DEFAULT_SIDEBAR_WIDTH = 120;
 let sidebarWidth = DEFAULT_SIDEBAR_WIDTH;
 const MIN_VIEW_WIDTH = 320;
@@ -356,16 +364,156 @@ const createTray = () => {
   return tray;
 };
 
+const normalizeWhatsAppTargetUrl = (rawUrl: string): WhatsAppLinkRequest | null => {
+  const value = rawUrl.trim()
+
+  if (value.length === 0) {
+    return null
+  }
+
+  const urlWithProtocol = value.startsWith('wa.me/')
+    ? `https://${value}`
+    : value
+
+  try {
+    const parsedUrl = new URL(urlWithProtocol)
+    const outputUrl = new URL('https://web.whatsapp.com/send')
+
+    if (parsedUrl.protocol === 'whatsapp:' && parsedUrl.hostname === 'send') {
+      const phone = parsedUrl.searchParams.get('phone')
+      const text = parsedUrl.searchParams.get('text')
+
+      if (phone) {
+        outputUrl.searchParams.set('phone', phone)
+      }
+
+      if (text) {
+        outputUrl.searchParams.set('text', text)
+      }
+
+      return {
+        displayUrl: rawUrl,
+        url: outputUrl.toString(),
+      }
+    }
+
+    if (parsedUrl.protocol !== 'https:') {
+      return null
+    }
+
+    if (parsedUrl.hostname === 'wa.me') {
+      const phone = parsedUrl.pathname.replace('/', '').trim()
+      const text = parsedUrl.searchParams.get('text')
+
+      if (phone.length > 0) {
+        outputUrl.searchParams.set('phone', phone)
+      }
+
+      if (text) {
+        outputUrl.searchParams.set('text', text)
+      }
+
+      return {
+        displayUrl: rawUrl,
+        url: outputUrl.toString(),
+      }
+    }
+
+    if (
+      parsedUrl.hostname === 'api.whatsapp.com' &&
+      parsedUrl.pathname.startsWith('/send')
+    ) {
+      const phone = parsedUrl.searchParams.get('phone')
+      const text = parsedUrl.searchParams.get('text')
+
+      if (phone) {
+        outputUrl.searchParams.set('phone', phone)
+      }
+
+      if (text) {
+        outputUrl.searchParams.set('text', text)
+      }
+
+      return {
+        displayUrl: rawUrl,
+        url: outputUrl.toString(),
+      }
+    }
+
+    if (
+      parsedUrl.hostname === 'web.whatsapp.com' &&
+      parsedUrl.pathname.startsWith('/send')
+    ) {
+      return {
+        displayUrl: rawUrl,
+        url: parsedUrl.toString(),
+      }
+    }
+  } catch {
+    return null
+  }
+
+  return null
+}
+
+const getWhatsAppLinkRequestFromArgv = (argv: string[]) => {
+  for (const arg of argv) {
+    const request = normalizeWhatsAppTargetUrl(arg)
+
+    if (request) {
+      return request
+    }
+  }
+
+  return null
+}
+
+const sendWhatsAppLinkRequestToRenderer = (request: WhatsAppLinkRequest) => {
+  pendingWhatsAppLinkRequest = request
+  showMainWindow()
+  win?.webContents.send('whatsapp-link-requested', request)
+}
+
+const registerWhatsAppProtocol = () => {
+  if (process.defaultApp && process.argv.length >= 2) {
+    app.setAsDefaultProtocolClient(WHATSAPP_PROTOCOL, process.execPath, [
+      path.resolve(process.argv[ 1 ]),
+    ])
+    return
+  }
+
+  app.setAsDefaultProtocolClient(WHATSAPP_PROTOCOL)
+}
+
+registerWhatsAppProtocol()
+
 const hasSingleInstanceLock = app.requestSingleInstanceLock();
 
 if (!hasSingleInstanceLock) {
   app.quit();
+  process.exit(0);
 }
 
-app.on('second-instance', () => {
-  showMainWindow();
+app.on('second-instance', (_event, argv) => {
+  const request = getWhatsAppLinkRequestFromArgv(argv)
+
+  if (request) {
+    sendWhatsAppLinkRequestToRenderer(request)
+    return
+  }
+
+  showMainWindow()
 });
 
+app.on('open-url', (event, targetUrl) => {
+  event.preventDefault()
+
+  const request = normalizeWhatsAppTargetUrl(targetUrl)
+
+  if (request) {
+    sendWhatsAppLinkRequestToRenderer(request)
+  }
+})
 
 function createWindow() {
   win = new BrowserWindow({
@@ -673,6 +821,12 @@ app.whenReady().then(() => {
     switchToWhatsAppView(savedSessions[ 0 ].id);
   }
 
+  const startupWhatsAppLinkRequest = getWhatsAppLinkRequestFromArgv(process.argv)
+
+  if (startupWhatsAppLinkRequest) {
+    pendingWhatsAppLinkRequest = startupWhatsAppLinkRequest
+  }
+
   ipcMain.handle('open-WhatsApp', (_event, id: number) => {
     if (!isValidSessionId(id)) {
       return;
@@ -753,6 +907,48 @@ app.whenReady().then(() => {
   ipcMain.handle('set-sidebar-width', (_event, nextWidth: number) => {
     setSidebarWidth(nextWidth);
   });
+
+  ipcMain.handle('get-pending-whatsapp-link-request', () => {
+    return pendingWhatsAppLinkRequest
+  })
+
+  ipcMain.handle('clear-pending-whatsapp-link-request', () => {
+    pendingWhatsAppLinkRequest = null
+  })
+
+  ipcMain.handle(
+    'open-whatsapp-link-in-session',
+    (_event: IpcMainInvokeEvent, sessionId: number, targetUrl: string) => {
+      if (!isValidSessionId(sessionId) || typeof targetUrl !== 'string') {
+        return false
+      }
+
+      const request = normalizeWhatsAppTargetUrl(targetUrl)
+
+      if (!request) {
+        return false
+      }
+
+      const sessionExists = sessionOrder.some((session) => session.id === sessionId)
+
+      if (!sessionExists) {
+        return false
+      }
+
+      switchToWhatsAppView(sessionId)
+
+      const view = viewsMap.get(sessionId)
+
+      if (!view) {
+        return false
+      }
+
+      void view.webContents.loadURL(request.url)
+      pendingWhatsAppLinkRequest = null
+
+      return true
+    },
+  )
 
   ipcMain.on('whatsapp-notification', (_event, payload: NotificationPayload) => {
     showDesktopNotification(payload);

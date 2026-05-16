@@ -19,6 +19,11 @@ type WhatsAppSession = {
   name: string;
 };
 
+type WhatsAppLinkRequest = {
+  displayUrl: string;
+  url: string;
+};
+
 const reorderAccounts = (
   accounts: WhatsAppSession[],
   fromId: number,
@@ -52,6 +57,15 @@ declare global {
       getSidebarCompact: () => Promise<boolean>;
       setSidebarCompact: (isCompact: boolean) => Promise<boolean>;
       getPlatform: () => Promise<SupportedPlatform>;
+      getPendingWhatsAppLinkRequest: () => Promise<WhatsAppLinkRequest | null>;
+      clearPendingWhatsAppLinkRequest: () => Promise<void>;
+      openWhatsAppLinkInSession: (
+        sessionId: number,
+        targetUrl: string,
+      ) => Promise<boolean>;
+      onWhatsAppLinkRequested: (
+        handler: (request: WhatsAppLinkRequest) => void,
+      ) => () => void;
     };
   }
 }
@@ -69,6 +83,9 @@ export default function App() {
   const [isUpdatingStartOnLogin, setIsUpdatingStartOnLogin] = useState(false);
   const [isSidebarCompact, setIsSidebarCompact] = useState(false);
   const [platform, setPlatform] = useState<SupportedPlatform>("linux");
+  const [pendingWhatsAppLinkRequest, setPendingWhatsAppLinkRequest] =
+    useState<WhatsAppLinkRequest | null>(null);
+  const [isOpeningWhatsAppLink, setIsOpeningWhatsAppLink] = useState(false);
 
   useEffect(() => {
     const loadFromMain = async () => {
@@ -98,10 +115,46 @@ export default function App() {
     const shouldShowBrowserView =
       currentView === "sessions" &&
       pendingDeleteId === null &&
-      !isCreateSessionOpen;
+      !isCreateSessionOpen &&
+      pendingWhatsAppLinkRequest === null;
 
     void window.electronAPI.setActiveViewVisible(shouldShowBrowserView);
-  }, [currentView, pendingDeleteId, isCreateSessionOpen]);
+  }, [
+    currentView,
+    pendingDeleteId,
+    isCreateSessionOpen,
+    pendingWhatsAppLinkRequest,
+  ]);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const loadPendingWhatsAppLinkRequest = async () => {
+      try {
+        const request =
+          await window.electronAPI.getPendingWhatsAppLinkRequest();
+
+        if (isMounted && request) {
+          setPendingWhatsAppLinkRequest(request);
+        }
+      } catch (err) {
+        console.error("Error loading pending WhatsApp link request:", err);
+      }
+    };
+
+    void loadPendingWhatsAppLinkRequest();
+
+    const unsubscribe = window.electronAPI.onWhatsAppLinkRequested(
+      (request) => {
+        setPendingWhatsAppLinkRequest(request);
+      },
+    );
+
+    return () => {
+      isMounted = false;
+      unsubscribe();
+    };
+  }, []);
 
   useEffect(() => {
     const nextWidth = isSidebarCompact
@@ -220,6 +273,36 @@ export default function App() {
 
     if (nextAccounts !== accounts) {
       persistOrder(nextAccounts);
+    }
+  };
+
+  const closeWhatsAppLinkSessionModal = () => {
+    setPendingWhatsAppLinkRequest(null);
+    void window.electronAPI.clearPendingWhatsAppLinkRequest();
+  };
+
+  const openWhatsAppLinkInSession = async (sessionId: number) => {
+    if (!pendingWhatsAppLinkRequest || isOpeningWhatsAppLink) {
+      return;
+    }
+
+    setIsOpeningWhatsAppLink(true);
+
+    try {
+      const didOpen = await window.electronAPI.openWhatsAppLinkInSession(
+        sessionId,
+        pendingWhatsAppLinkRequest.url,
+      );
+
+      if (!didOpen) {
+        return;
+      }
+
+      setCurrentView("sessions");
+      setActiveId(sessionId);
+      setPendingWhatsAppLinkRequest(null);
+    } finally {
+      setIsOpeningWhatsAppLink(false);
     }
   };
 
@@ -422,6 +505,69 @@ export default function App() {
           </section>
         )}
       </main>
+
+      {pendingWhatsAppLinkRequest !== null ? (
+        <dialog className="modal modal-open">
+          <div className="modal-box max-w-md rounded-3xl border border-base-300/70 bg-base-100 shadow-xl">
+            <h3 className="text-lg font-semibold text-base-content">
+              Open WhatsApp link
+            </h3>
+            <p className="mt-3 text-sm leading-relaxed text-base-content/70">
+              Choose which session should open this link.
+            </p>
+
+            <div className="mt-4 rounded-2xl border border-base-300/70 bg-base-200/60 px-3 py-2 text-xs text-base-content/60">
+              <p className="truncate">
+                {pendingWhatsAppLinkRequest.displayUrl}
+              </p>
+            </div>
+
+            <div className="mt-5 flex max-h-72 flex-col gap-2 overflow-y-auto">
+              {accounts.length > 0 ? (
+                accounts.map((account) => (
+                  <button
+                    key={account.id}
+                    type="button"
+                    className="btn btn-ghost justify-start rounded-2xl border border-base-300/70 bg-base-200/50 normal-case hover:border-success/30 hover:bg-success/10 hover:text-success"
+                    disabled={isOpeningWhatsAppLink}
+                    onClick={() => void openWhatsAppLinkInSession(account.id)}>
+                    <FaWhatsapp className="h-4 w-4" />
+                    <span className="min-w-0 truncate text-sm font-semibold">
+                      {account.name}
+                    </span>
+                    <span className="ml-auto text-xs text-base-content/45">
+                      #{account.id}
+                    </span>
+                  </button>
+                ))
+              ) : (
+                <div className="rounded-2xl border border-dashed border-base-300/80 bg-base-200/50 px-3 py-4 text-center text-sm leading-relaxed text-base-content/55">
+                  There are no sessions available. Create an account first.
+                </div>
+              )}
+            </div>
+
+            <div className="modal-action mt-6">
+              <button
+                type="button"
+                className="btn btn-ghost rounded-2xl"
+                disabled={isOpeningWhatsAppLink}
+                onClick={closeWhatsAppLinkSessionModal}>
+                Cancel
+              </button>
+            </div>
+          </div>
+          <button
+            className="modal-backdrop cursor-pointer"
+            onClick={() => {
+              if (!isOpeningWhatsAppLink) {
+                closeWhatsAppLinkSessionModal();
+              }
+            }}>
+            close
+          </button>
+        </dialog>
+      ) : null}
 
       {isCreateSessionOpen ? (
         <dialog className="modal modal-open">
